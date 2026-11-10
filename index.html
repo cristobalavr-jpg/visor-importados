@@ -155,6 +155,16 @@ tr.edit td:first-child{font-weight:700;color:#3730a3}
    lo manda el panel y no el contenido. */
 .panel table.tpanel{table-layout:fixed;width:100%}
 .panel .tblbox{overflow-x:hidden}
+/* Tabla de proyeccion de la vista POR PROVEEDOR: se muestra COMPLETA y el
+   desplazamiento lo hace la barra vertical de la pagina.
+   Antes heredaba el tope de `.panel .tblbox` (414px ~ 13 filas) y cada tabla
+   traia su propio scroll interno. Con un proveedor de 10 SKU eso son 10 cajitas
+   con scroll propio: para llegar a las ultimas semanas de cada una habia que
+   entrar a cada caja, y se leia como si la tabla estuviera cortada.
+   `overflow:visible` ademas devuelve el thead pegajoso al viewport de la pagina
+   (dentro de un contenedor con scroll se pegaba a la cajita, que no se movia).
+   La tabla es table-layout:fixed al 100%, asi que no se desborda a lo ancho. */
+.panel .tblbox.tbl-proy{max-height:none;overflow:visible}
 .tpanel col.p1{width:5.5%}    /* SEM        */
 .tpanel col.p2{width:13%}     /* FCAST      */
 .tpanel col.p3{width:11%}     /* Stock Ini  */
@@ -1131,6 +1141,45 @@ function vistaTransito(R){
    equilibrar cantidades entre ellos de una sola pasada. */
 let PROV_SEL = '';
 
+/* La proyeccion de un SKU recorre las filas de FC que EXISTEN en el Excel
+   (calcular_imp.py: `filas[idx0:idx0+horizonte]`), no el horizonte configurado.
+   Si la planilla trae el FC cargado hasta la W53 y el horizonte son 40 semanas,
+   la tabla termina en la W53 y abajo no hay nada mas: no es que falte scroll,
+   es que falta FC. Sin decirlo en pantalla se lee como una tabla cortada —
+   paso con los 4 SKU de vasos de GO RABBIT el 2026-11-10.
+   El aviso dice cuantas semanas faltan y donde se arregla. */
+function avisoCorte(c, it){
+  const hay = (c.W||[]).length, pedidas = D.horizonte || 0;
+  if(!hay) return '';
+  const u   = c.W[hay-1];
+  const fin = `${u.anio}-S${String(u.sem).padStart(2,'0')}`;
+  const lt  = c.lt || 0;
+  const ss  = Math.round((it && it.ss_sem) || 0);
+  const falta = Math.max(0, pedidas - hay);
+  const hoja  = esc((it && (it.hoja_label || it.hoja)) || '');
+
+  // Umbral: que la proyeccion cubra el LEAD TIME (+ stock de seguridad). Ese es
+  // el horizonte minimo para que la decision de compra sea visible: si el LT son
+  // 17 semanas y la tabla muestra 8, el punto de reorden cae FUERA de la tabla y
+  // el comprador no tiene con que decidir.
+  // NO se usa el horizonte configurado como umbral: hoy ningun SKU llega a las
+  // 40 semanas, asi que avisaba en el 100% de los paneles — una alerta que sale
+  // siempre es ruido (regla de oro 5).
+  if(hay <= lt + ss){
+    return `<tr><td colspan="10" class="l" style="background:#fef2f2;color:#7f1d1d;
+        font-size:.63rem;line-height:1.45;padding:6px 8px;border-top:2px solid #fca5a5">
+        <b>⚠ La proyección (${hay} sem) es más corta que el lead time (${lt} sem).</b>
+        Termina en <b>${fin}</b>, así que el <b>punto de reorden queda fuera de la
+        tabla</b>: para decidir una compra que tarda ${lt} semanas en llegar hay que
+        ver al menos ${lt+ss} semanas hacia adelante. No faltan filas abajo —
+        falta FC: cargar ${falta} semanas más en la hoja <b>${hoja}</b> del Excel.</td></tr>`;
+  }
+  return `<tr><td colspan="10" class="l dim" style="background:#f8fafc;font-size:.62rem;
+      line-height:1.4;padding:5px 8px;border-top:1px solid var(--linea)">
+      Fin de la proyección: <b>${fin}</b> · ${hay} de ${pedidas} semanas del horizonte
+      (el FC de la hoja ${hoja} llega hasta ahí).</td></tr>`;
+}
+
 function vistaProv(R){
   const provs = [...new Set(R.map(r=>r.it.proveedor||'(sin proveedor)'))].sort();
   if(!PROV_SEL || !provs.includes(PROV_SEL)) PROV_SEL = provs[0];
@@ -1258,7 +1307,7 @@ function vistaProv(R){
         ${modDe(it.sku)?`· modulación ${fmt(modDe(it.sku))}`:'· <span class="chip warn">sin modulación</span>'}
         ${chipAl} ${chipLib}</div>
       ${GRAF_MODO==='vol' ? grafVolumenMini(c, it) : grafCoberturaMini(c, it)}
-      <div class="tblbox"><table class="tpanel">
+      <div class="tblbox tbl-proy"><table class="tpanel">
         <colgroup><col class="p1"><col class="p2"><col class="p3"><col class="p4">
           <col class="p5"><col class="p6"><col class="p7"><col class="p8">
           <col class="p9"><col class="p10"></colgroup>
@@ -1268,7 +1317,7 @@ function vistaProv(R){
           <th class="l">Cód Imp.</th><th class="l">OC</th><th class="l">Cont.</th>
           <th>Stock Fin</th><th class="c" title="Cobertura en semanas = Stock Inicial / FCAST">COB. SEM</th>
           <th class="l">A</th></tr></thead>
-        <tbody>${filasH}${filas}</tbody></table></div>
+        <tbody>${filasH}${filas}${avisoCorte(c, it)}</tbody></table></div>
     </div>`;
   }).join('');
 
